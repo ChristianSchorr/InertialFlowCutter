@@ -32,22 +32,23 @@ if(NOT EXISTS "${PROJECT_SOURCE_DIR}/extern/KaHIP/CMakeLists.txt")
 endif()
 
 find_package (OpenMP REQUIRED)
-find_library (READLINE NAMES libreadline.a libreadline readline)
-if (NOT READLINE)
-    message (FATAL_ERROR "readline library not found.")
-endif()
+#find_library (READLINE NAMES libreadline.a libreadline readline)
+#if (NOT READLINE)
+#    message (FATAL_ERROR "readline library not found.")
+#endif()
 
 if (USE_KAHIP)
     add_subdirectory (extern/KaHIP EXCLUDE_FROM_ALL)
 endif()
 
 set (SOURCE_FILES
-    src/console.cpp
-    src/fancy_input.cpp
+    #src/console.cpp
+    #src/fancy_input.cpp
     src/permutation.cpp
     src/list_graph.cpp
-    src/file_utility.cpp
-    src/geo_pos.cpp)
+    #src/file_utility.cpp
+    #src/geo_pos.cpp
+    )
 
 add_custom_target (
     routingkit
@@ -57,26 +58,34 @@ add_custom_target (
 
 
 #add_custom_target (routingkit DEPENDS ${CMAKE_SOURCE_DIR}/extern/RoutingKit/lib/libroutingkit.a )
-
-add_executable (console ${SOURCE_FILES})
-add_executable (customize customize.cpp)
-add_executable (query query.cpp)
-
-target_include_directories (customize PRIVATE extern/RoutingKit/include)
-target_link_libraries (customize ${CMAKE_SOURCE_DIR}/extern/RoutingKit/lib/libroutingkit.a OpenMP::OpenMP_CXX)
-add_dependencies (customize routingkit)
-
-target_include_directories (query PRIVATE extern/RoutingKit/include)
-target_link_libraries (query ${CMAKE_SOURCE_DIR}/extern/RoutingKit/lib/libroutingkit.a OpenMP::OpenMP_CXX)
-add_dependencies (query routingkit)
-
+add_library(inertial_flow STATIC ${SOURCE_FILES} src/inertial_flow_cutter.cpp)
+target_include_directories(inertial_flow INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(inertial_flow PUBLIC ${TBB_LIBRARIES})
 if (USE_KAHIP)
-    target_compile_definitions(console PUBLIC USE_KAHIP)
-    target_link_libraries (console PUBLIC interface_static)
+    target_compile_definitions(inertial_flow PUBLIC USE_KAHIP)
+    target_link_libraries (inertial_flow PUBLIC interface_static)
 endif()
-target_link_libraries(console PUBLIC ${READLINE})
-target_link_libraries(console PUBLIC ${TBB_LIBRARIES})
-if (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
-    target_link_libraries(console PUBLIC tinfo)
-endif()
+
+# add_executable (console ${SOURCE_FILES})
+# add_executable (customize customize.cpp)
+# add_executable (query query.cpp)
+
+# target_include_directories (customize PRIVATE extern/RoutingKit/include)
+# target_link_libraries (customize ${CMAKE_SOURCE_DIR}/extern/RoutingKit/lib/libroutingkit.a OpenMP::OpenMP_CXX)
+# add_dependencies (customize routingkit)
+
+# target_include_directories (query PRIVATE extern/RoutingKit/include)
+# target_link_libraries (query ${CMAKE_SOURCE_DIR}/extern/RoutingKit/lib/libroutingkit.a OpenMP::OpenMP_CXX)
+# add_dependencies (query routingkit)
+
+# if (USE_KAHIP)
+#     target_compile_definitions(console PUBLIC USE_KAHIP)
+#     target_link_libraries (console PUBLIC interface_static)
+# endif()
+# target_link_libraries(console PUBLIC ${READLINE})
+# target_link_libraries(console PUBLIC ${TBB_LIBRARIES})
+# if (NOT ${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
+#     target_link_libraries(console PUBLIC tinfo)
+# endif()
+
 

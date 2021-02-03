@@ -3,6 +3,7 @@
 #include "array_id_func.h"
 #include "count_range.h"
 #include "id_sort.h"
+#include "tiny_id_func.h"
 #include <vector>
 
 //! input graph must be a symmetric graph

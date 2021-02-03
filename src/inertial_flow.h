@@ -208,29 +208,51 @@ namespace inertial_flow{
 
 	template<class GetGeoPos>
 	struct InertialFlowSeparator{
+
 		InertialFlowSeparator(const GetGeoPos&geo_pos, double min_balance, bool use_dinic):
 			geo_pos(&geo_pos), min_balance(min_balance), use_dinic(use_dinic){}
+
+		InertialFlowSeparator(const GetGeoPos&geo_pos, double min_balance, bool use_dinic, std::vector<std::vector<int>>*separators):
+			geo_pos(&geo_pos), min_balance(min_balance), use_dinic(use_dinic), seps(separators){}
 
 		template<class Tail, class Head, class InputNodeID, class ArcWeight>
 		std::vector<int>operator()(const Tail&tail, const Head&head, const InputNodeID& input_node_id, const ArcWeight&)const{
 			const int node_count = head.image_count();
-			return compute_inertial_flow_separator(
+			std::vector<int> sep = compute_inertial_flow_separator(
 				tail, head, 
 				id_func(node_count, [&](int x){return (*geo_pos)(input_node_id(x));}),
 				min_balance,
 				use_dinic
 			);
+
+			if (seps != nullptr)
+			{
+				std::vector<int> sep_tmp(sep);
+				for(unsigned int i = 0; i < sep_tmp.size(); i++)
+					sep_tmp[i] = input_node_id(sep_tmp[i]);
+				seps->push_back(sep_tmp);
+			}
+			
+			return sep;
 		}
 
 		const GetGeoPos*geo_pos;
 		double min_balance;
 		bool use_dinic;
+
+		std::vector<std::vector<int>> *seps = nullptr;
 	};
 
 	template<class GetGeoPos>
 	InertialFlowSeparator<GetGeoPos>
 		ComputeSeparator(const GetGeoPos&geo_pos, double min_balance, bool use_dinic){
 		return {geo_pos, min_balance, use_dinic};
+	}
+
+	template<class GetGeoPos>
+	InertialFlowSeparator<GetGeoPos>
+		ComputeSeparator(const GetGeoPos&geo_pos, double min_balance, bool use_dinic, std::vector<std::vector<int>> *separators){
+		return {geo_pos, min_balance, use_dinic, separators};
 	}
 }
 

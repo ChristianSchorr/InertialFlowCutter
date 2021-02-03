@@ -1,6 +1,7 @@
 #ifndef MIN_FILL_IN_H
 #define MIN_FILL_IN_H
 
+#include "id_func.h"
 #include "tree_node_ranking.h"
 #include "connected_components.h"
 #include "tiny_id_func.h"
@@ -13,6 +14,7 @@
 #include "id_multi_func.h"
 #include "preorder.h"
 #include <vector>
+#include <iostream>
 
 #ifndef NDEBUG
 #include "union_find.h"
@@ -115,6 +117,43 @@ namespace cch_order{
 		return order; // NVRO
 	}
 
+
+	// Computes an optimal order for a trivial graph. If the input graph is not trivial, then the task is forwarded to the compute_non_trivial_graph_order functor parameter.
+	// A graph is trivial if it is a clique or a tree.
+	//	
+	// Precondition: the graph is connected
+	template<class ComputeNonTrivialGraphOrder>
+	ArrayIDIDFunc compute_trivial_graph_order_if_graph_is_trivial(
+		ArrayIDIDFunc tail, ArrayIDIDFunc head, 
+		ArrayIDIDFunc input_node_id,
+		ArrayIDFunc<int>arc_weight, const ComputeNonTrivialGraphOrder&compute_non_trivial_graph_order,
+		int level
+	){
+		const int node_count = tail.image_count();
+		const int arc_count = tail.preimage_count();
+
+		assert(is_connected(tail, head));
+
+		bool 
+			is_clique = (static_cast<long long>(node_count)*static_cast<long long>(node_count-1) == static_cast<long long>(arc_count)),
+			has_no_arcs = (arc_count == 0),
+			is_tree = (arc_count == 2*(node_count-1));
+
+		ArrayIDIDFunc order;
+
+
+		if(is_clique || has_no_arcs){
+			order = id_id_func(node_count, input_node_id.image_count(), [&](int x){return input_node_id(x);});
+		}else if(is_tree){
+			order = compute_tree_graph_order(std::move(tail), std::move(head), std::move(input_node_id));
+		}else {
+			order = compute_non_trivial_graph_order(std::move(tail), std::move(head), std::move(input_node_id), std::move(arc_weight), level);
+		}
+
+		assert(is_valid_partial_order(order));
+		return order; // NVRO
+	}
+
 	// This function internally reorders the nodes in preorder, then recurses on each component of the graph.
 	// should_place_node_at_the_end_of_the_order is called with the id of some node of the component and the function should decide
 	// whether this component is placed at the end of the order or at the front.
@@ -129,7 +168,6 @@ namespace cch_order{
 		const ComputeConnectedGraphOrder&compute_connected_graph_order,
 		const ShouldPlaceNodeAtTheEndOfTheOrder&should_place_node_at_the_end_of_the_order
 	){
-
 		const int node_count = tail.image_count();
 		const int arc_count = tail.preimage_count();
 
@@ -218,6 +256,7 @@ namespace cch_order{
 					}
 					int sub_order_begin = get_sub_order_begin(node_begin, node_end);
 					SubProblem sp = {node_begin, node_end, arc_begin, arc_end, sub_order_begin};
+
 					if (sp.node_count() > TASK_SPAWN_CUTOFF) big.push_back(sp); else small.push_back(sp);
 					node_begin = node_end;
 					arc_begin = arc_end;
@@ -226,6 +265,7 @@ namespace cch_order{
 
 			int sub_order_begin = get_sub_order_begin(node_begin, node_count);
 			SubProblem sp = {node_begin, node_count, arc_begin, arc_count, sub_order_begin};
+
 			if (sp.node_count() > TASK_SPAWN_CUTOFF) big.push_back(sp); else small.push_back(sp);
 		}
 
@@ -258,7 +298,7 @@ namespace cch_order{
 			int arc_begin = sub_problem.arc_begin; int arc_end = sub_problem.arc_end;
 			int sub_order_begin = sub_problem.sub_order_begin;
 			auto sub_node_count = node_end - node_begin;
-			auto sub_arc_count = arc_end - arc_begin;
+			auto sub_arc_count = arc_end - arc_begin;			
 
 			auto sub_tail = id_id_func(
 					sub_arc_count, sub_node_count,
@@ -288,13 +328,13 @@ namespace cch_order{
 			assert(!has_multi_arcs(sub_tail, sub_head));
 			assert(is_loop_free(sub_tail, sub_head));
 
-			auto sub_order = compute_trivial_graph_order_if_graph_is_trivial(sub_tail, sub_head, sub_input_node_id, sub_arc_weight, compute_connected_graph_order);
+			ArrayIDIDFunc sub_order;
+			sub_order = compute_trivial_graph_order_if_graph_is_trivial(sub_tail, sub_head, sub_input_node_id, sub_arc_weight, compute_connected_graph_order);
+
 			for (int i = 0; i < sub_node_count; ++i) {
 				order[sub_order_begin + i] = sub_order(i);
 			}
 		};
-
-
 
 		tbb::task_group tg;
 		if (big.size() == 1 && small.size() < 200000) {
@@ -310,6 +350,229 @@ namespace cch_order{
 		});
 		assert(order_begin == order_end);
 		assert(is_valid_partial_order(order));
+		
+		return order; // NVRO
+	}
+
+
+	// This function internally reorders the nodes in preorder, then recurses on each component of the graph.
+	// should_place_node_at_the_end_of_the_order is called with the id of some node of the component and the function should decide
+	// whether this componentauto is placed at the end of the order or at the front.
+	// If the relative component order does not matter, then let should_place_node_at_the_end_of_the_order always return false.
+	//
+	// compute_connected_graph_order should order the nodes in each component. The order should map node IDs in the graph that is given to input node IDs.
+	template<class ComputeConnectedGraphOrder, class ShouldPlaceNodeAtTheEndOfTheOrder>
+	ArrayIDIDFunc reorder_nodes_in_preorder_and_compute_unconnected_graph_order_if_component_is_non_trivial(
+		ArrayIDIDFunc tail, ArrayIDIDFunc head, 
+		ArrayIDIDFunc input_node_id,
+		ArrayIDFunc<int> arc_weight,
+		const ComputeConnectedGraphOrder&compute_connected_graph_order,
+		const ShouldPlaceNodeAtTheEndOfTheOrder&should_place_node_at_the_end_of_the_order,
+		int level, int max_level
+	){
+		const int node_count = tail.image_count();
+		const int arc_count = tail.preimage_count();
+
+		if (level == max_level)
+			return id_id_func(node_count, input_node_id.image_count(), [&](int x){return input_node_id(x);});
+
+		// We first reorder the graph nodes in preorder
+		auto x = compute_preorder(compute_successor_function(tail, head));
+		auto& preorder = x.first;
+		auto& num_components = x.second;
+		//TODO if preorder returns just one component skip all of the reordering stuff. actually we should figure out  a way to do biconnected immediately and never do connected components. saves another second
+
+		if (num_components == 1) {
+			return compute_trivial_graph_order_if_graph_is_trivial(std::move(tail), std::move(head), std::move(input_node_id), std::move(arc_weight), compute_connected_graph_order, level);
+		}
+
+		{
+			auto inv_preorder = inverse_permutation(preorder);
+			tail = chain(std::move(tail), inv_preorder);
+			head = chain(std::move(head), inv_preorder);
+			input_node_id = chain(preorder, std::move(input_node_id));
+		}
+
+		// We then sort the arcs accordingly
+
+		{
+			auto p = sort_arcs_first_by_tail_second_by_head(tail, head);
+			tail = chain(p, std::move(tail));
+			head = chain(p, std::move(head));
+			arc_weight = chain(p, std::move(arc_weight));
+		}
+
+		assert(is_symmetric(tail, head));
+
+		ArrayIDIDFunc order(node_count, input_node_id.image_count());
+		int order_begin = 0;
+		int order_end = node_count;
+		
+		auto get_sub_order_begin = [&](int node_begin, int node_end) {
+			int sub_node_count = node_end - node_begin;
+#ifndef NDEBUG
+			{
+				bool r = should_place_node_at_the_end_of_the_order(preorder(node_begin));
+				for (int x = node_begin; x < node_end; ++x) {
+					assert(r == should_place_node_at_the_end_of_the_order(preorder(x)));
+				}
+			}
+#endif
+
+			int sub_order_begin = order_begin;
+			if (should_place_node_at_the_end_of_the_order(preorder(node_begin))) {
+				order_end -= sub_node_count;
+				sub_order_begin = order_end;
+				assert(order_begin <= order_end);
+			}
+			else {
+				assert(order_begin + sub_node_count <= order_end);
+				order_begin += sub_node_count;
+			}
+			return sub_order_begin;
+		};
+
+
+		struct SubProblem {
+			int node_begin, node_end, arc_begin, arc_end, sub_order_begin;
+			int node_count() const { return node_end - node_begin; }
+
+			bool reorder = true;
+		};
+		std::vector<SubProblem> big, small;
+
+
+		// By reordering the nodes in preorder, we can guarentee, that the nodes of every component are from a coninous range.
+		// As we sorted the arcs this is also true for the arcs.
+		// We identify components by marking the node in each component with the minimum ID.
+		// We do this using the following observation, if an arc (u,v) exists with u<v then v is not such a node
+		BitIDFunc component_begin(node_count);
+		component_begin.fill(true);
+		for(int i=0; i<arc_count; ++i)
+			if(head(i) < tail(i))
+				component_begin.set(tail(i), false);
+
+		{
+			int node_begin = 0;
+			int arc_begin = 0;
+			for (int node_end = 1; node_end < node_count; ++node_end) {
+				if (component_begin(node_end)) {
+					int arc_end = arc_begin;
+					while (arc_end < arc_count && tail(arc_end) < node_end) {
+						++arc_end;
+					}
+					int sub_order_begin = get_sub_order_begin(node_begin, node_end);
+					SubProblem sp = {node_begin, node_end, arc_begin, arc_end, sub_order_begin};
+
+					if (should_place_node_at_the_end_of_the_order(preorder(node_begin)))
+					{
+						sp.reorder = false;
+					}
+
+					if (sp.node_count() > TASK_SPAWN_CUTOFF) big.push_back(sp); else small.push_back(sp);
+					node_begin = node_end;
+					arc_begin = arc_end;
+				}
+			}
+
+			int sub_order_begin = get_sub_order_begin(node_begin, node_count);
+			SubProblem sp = {node_begin, node_count, arc_begin, arc_count, sub_order_begin};
+
+			if (should_place_node_at_the_end_of_the_order(preorder(node_begin)))
+			{
+						sp.reorder = false;
+			}
+
+			if (sp.node_count() > TASK_SPAWN_CUTOFF) big.push_back(sp); else small.push_back(sp);
+		}
+
+
+#ifndef NDEBUG
+			std::vector<bool> nodes_covered((unsigned long) node_count, false);
+			std::vector<bool> order_covered((unsigned long) node_count, false);
+			auto cover = [&](const SubProblem sp) {
+				for (int u = sp.node_begin; u < sp.node_end; ++u) {
+					assert(!nodes_covered[u]);
+					nodes_covered[u] = true;
+				}
+				int sub_node_count = sp.node_end - sp.node_begin;
+				for (int u = sp.sub_order_begin; u < sp.sub_order_begin + sub_node_count; ++u) {
+					assert(!order_covered[u]);
+					order_covered[u] = true;
+				}
+			};
+			for (const SubProblem sp : big)
+				cover(sp);
+			for (const SubProblem sp : small)
+				cover(sp);
+			assert(std::all_of(nodes_covered.begin(), nodes_covered.end(), [](const bool& x) { return x; }));
+			assert(std::all_of(order_covered.begin(), order_covered.end(), [](const bool& x) { return x; }));
+#endif
+
+		//auto on_new_component = [&tail, &head, &input_node_id, &arc_weight, &order, &compute_connected_graph_order](SubProblem& sub_problem){
+		auto on_new_component = [&](SubProblem sub_problem){
+			int node_begin = sub_problem.node_begin; int node_end = sub_problem.node_end;
+			int arc_begin = sub_problem.arc_begin; int arc_end = sub_problem.arc_end;
+			int sub_order_begin = sub_problem.sub_order_begin;
+			auto sub_node_count = node_end - node_begin;
+			auto sub_arc_count = arc_end - arc_begin;			
+
+			auto sub_tail = id_id_func(
+					sub_arc_count, sub_node_count,
+					[&](int x){
+						return tail(arc_begin + x) - node_begin;
+					}
+			);
+			auto sub_head = id_id_func(
+					sub_arc_count, sub_node_count,
+					[&](int x){
+						return head(arc_begin + x) - node_begin;
+					}
+			);
+			auto sub_input_node_id = id_id_func(
+					sub_node_count, input_node_id.image_count(),
+					[&](int x){
+						return input_node_id(node_begin + x);
+					}
+			);
+			auto sub_arc_weight = id_func(
+					sub_arc_count,
+					[&](int x){
+						return arc_weight(x + arc_begin);
+					}
+			);
+			assert(is_symmetric(sub_tail, sub_head));
+			assert(!has_multi_arcs(sub_tail, sub_head));
+			assert(is_loop_free(sub_tail, sub_head));
+
+			ArrayIDIDFunc sub_order;
+			if (sub_problem.reorder)
+				sub_order = compute_trivial_graph_order_if_graph_is_trivial(sub_tail, sub_head, sub_input_node_id, sub_arc_weight, compute_connected_graph_order, level);
+			else
+				//sub_order = compute_trivial_graph_order_if_graph_is_trivial(sub_tail, sub_head, sub_input_node_id, sub_arc_weight, compute_connected_graph_order, level);
+				sub_order = id_id_func(sub_node_count, sub_input_node_id.image_count(), [&](int x){return sub_input_node_id(x);});
+				//sub_order = identity_permutation(sub_node_count);
+
+			for (int i = 0; i < sub_node_count; ++i) {
+				order[sub_order_begin + i] = sub_order(i);
+			}
+		};
+
+		tbb::task_group tg;
+		if (big.size() == 1 && small.size() < 200000) {
+			small.push_back(big.front());
+			big.clear();
+		}
+		//std::sort(big.begin(), big.end(), [](const auto& a, const auto& b) { return a.node_count() > b.node_count(); });
+		for (const SubProblem sp : big) {
+			tg.run(std::bind(on_new_component, sp));
+		}
+		tg.run_and_wait([&]() {
+			std::for_each(small.begin(), small.end(), on_new_component);
+		});
+		assert(order_begin == order_end);
+		assert(is_valid_partial_order(order));
+		
 		return order; // NVRO
 	}
 
@@ -358,6 +621,61 @@ namespace cch_order{
 		);
 	}
 
+	template<class ComputeSeparator, class ComputePartOrder>
+	ArrayIDIDFunc compute_nested_dissection_graph_order(
+		ArrayIDIDFunc tail, ArrayIDIDFunc head, 
+		ArrayIDIDFunc input_node_id,
+		ArrayIDFunc<int> arc_weight, 
+		const ComputeSeparator&compute_separator,
+		const ComputePartOrder&compute_graph_part_order,
+		int level, std::vector<std::pair<int, std::vector<int>>> &separators,
+		int max_levels
+	){
+		const int node_count = tail.image_count();
+		const int arc_count = tail.preimage_count();
+		auto separator = compute_separator(tail, head, input_node_id, arc_weight);
+		assert(separator.size() > 0);
+
+		BitIDFunc in_separator(node_count);
+		in_separator.fill(false);
+		for(auto x:separator)
+			in_separator.set(x, true);
+
+		BitIDFunc keep_arc_flag = id_func(
+			arc_count, 
+			[&](int a){
+				return in_separator(tail(a)) == in_separator(head(a));
+			}
+		);
+				
+	    if((int)separator.size() == node_count){
+			keep_arc_flag.fill(false);
+		}
+
+		int new_arc_count = count_true(keep_arc_flag);
+		tail = keep_if(keep_arc_flag, new_arc_count, std::move(tail));
+		head = keep_if(keep_arc_flag, new_arc_count, std::move(head));
+		arc_weight = keep_if(keep_arc_flag, new_arc_count, std::move(arc_weight));
+
+		assert(is_symmetric(tail, head));
+		
+		//std::cout<< separator.size() << std::endl;
+		std::vector<int> perm_sep = {};
+		for (unsigned int i = 0; i < separator.size(); i++)
+			perm_sep.push_back(input_node_id(separator[i]));
+		
+		separators.emplace_back(level, perm_sep);
+
+		auto res = reorder_nodes_in_preorder_and_compute_unconnected_graph_order_if_component_is_non_trivial(
+			std::move(tail), std::move(head), 
+			std::move(input_node_id), std::move(arc_weight), 
+			compute_graph_part_order, std::move(in_separator),
+			++level, max_levels
+		);
+
+		return res;
+	}
+
 	template<class ComputeSeparator>
 	ArrayIDIDFunc compute_nested_dissection_graph_order(
 		ArrayIDIDFunc tail, ArrayIDIDFunc head, 
@@ -377,6 +695,32 @@ namespace cch_order{
 		};
 		return compute_nested_dissection_graph_order(tail, head, input_node_id, arc_weight, compute_separator, compute_graph_part_order);
 	}
+
+
+	template<class ComputeSeparator>
+	ArrayIDIDFunc compute_nested_dissection_graph_order(
+		ArrayIDIDFunc tail, ArrayIDIDFunc head, 
+		ArrayIDIDFunc input_node_id,
+		ArrayIDFunc<int> arc_weight, 
+		const ComputeSeparator&compute_separator,
+		int level, std::vector<std::pair<int, std::vector<int>>> &separators,
+		int max_levels
+	){
+
+		auto compute_graph_part_order = [&](
+			ArrayIDIDFunc a_tail, ArrayIDIDFunc a_head, 
+			ArrayIDIDFunc a_input_node_id, ArrayIDFunc<int>a_arc_weight,
+			int level
+		){
+			return compute_nested_dissection_graph_order(
+				std::move(a_tail), std::move(a_head), 
+				std::move(a_input_node_id), std::move(a_arc_weight), 
+				compute_separator, level, separators, max_levels
+			);
+		};
+		return compute_nested_dissection_graph_order(tail, head, input_node_id, arc_weight, compute_separator, compute_graph_part_order, level, separators, max_levels);
+	}
+
 
 	template<class ComputeCoreGraphOrder>
 	ArrayIDIDFunc compute_graph_order_with_large_degree_three_independent_set_at_the_begin(
@@ -777,6 +1121,43 @@ namespace cch_order{
 
 		return order; // NVRO
 	}
+
+
+	template<class ComputeSeparator>
+	ArrayIDIDFunc compute_nested_dissection_graph_order(
+		ArrayIDIDFunc tail, ArrayIDIDFunc head,
+		ArrayIDFunc<int> arc_weight, 
+		const ComputeSeparator&compute_separator,
+		int level, std::vector<std::pair<int, std::vector<int>>> &separators,
+		int max_levels
+	){
+		const int node_count = tail.image_count();
+
+		make_graph_simple(tail, head, arc_weight);
+
+		auto input_node_id = identity_permutation(node_count);
+		auto compute_order = [&](
+			ArrayIDIDFunc a_tail, ArrayIDIDFunc a_head,
+			ArrayIDIDFunc a_input_node_id, ArrayIDFunc<int> a_arc_weight, 
+			int level
+		){
+			return compute_nested_dissection_graph_order(
+				std::move(a_tail), std::move(a_head), std::move(a_input_node_id), std::move(a_arc_weight), 
+				compute_separator, level, separators, max_levels
+			);
+		};
+
+		auto order = reorder_nodes_in_preorder_and_compute_unconnected_graph_order_if_component_is_non_trivial(
+			std::move(tail), std::move(head), std::move(input_node_id), std::move(arc_weight), 
+			compute_order, [](int){return false;},
+			++level, max_levels
+		);
+
+		assert(is_permutation(order));
+
+		return order; // NVRO
+	}
+
 
 	template<class ComputeSeparator>
 	ArrayIDIDFunc compute_cch_graph_order(

@@ -9,6 +9,7 @@
 #include "inertial_flow.h"
 
 #include <vector>
+#include <set>
 #include <cassert>
 
 #include <kaHIP_interface.h>
@@ -89,10 +90,14 @@ namespace my_kahip{
 			sep = {0};
 		} else {
 			::inertial_flow::Cut c = compute_my_kahip_cut(tail, head, min_balance);
-			
+			std::set<int> s;
+
 			for(int i=0; i<arc_count; ++i)
 				if(c.is_on_smaller_side(tail(i)) && !c.is_on_smaller_side(head(i)))
-					sep.push_back(head(i));
+					s.insert(head(i));
+
+			for (int elem : s)
+				sep.push_back(elem);
 		}
 		return sep; // NVRO
 	}
